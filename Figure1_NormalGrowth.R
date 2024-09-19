@@ -1,16 +1,35 @@
-# MCF7 time-course paper
-# Plots for figure 1
-# A: Volcano of normal growth condition, full proteome TAMR/LTED vs. WT
-# Statistics from EV
+# MCF7 LTED, TAMR PAK1 manuscript
+# Plots for figure 1 (global proteomic differences to MCF7 WT under normal growth conditions)
+# get dataset provided on github: RE_Analysis_NormalGrowth_FullProteome_Norm_Filt_Proc_09112023.RData
 
-setwd("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/FULL/")
+library(PhosR)
+library(limma)
+library(pheatmap)
+library(tidyverse)
+library(factoextra)
+library(ggplot2)
+library(ggpubr)
+library(wordcloud)
+library(ReactomePA)
+require(DOSE)
+library(stats)
+library('org.Hs.eg.db')
+library(OmnipathR)
 
+
+your_path = "K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/FULL/"
+#read in data:
 # Full proteome:
-load("RE_Analysis_NormalGrowth_FullProteome_Norm_Filt_Proc_09112023.RData")
+load(paste0(your_path,"RE_Analysis_NormalGrowth_FullProteome_Norm_Filt_Proc_09112023.RData"))
 full = se_final@assays@data@listData$Norm_Filt
 
+#Phospho proteome:
+load(paste0(your_path,"Normal_Growth_Phospho_Normalized_Filt_Proc_05122023.RData"))
+phospho = ppe_filt@assays@data@listData$Normalization
 
-library(pheatmap)
+
+
+# plotting of full proteome results:
 full_cluster = pheatmap(na.omit(full[,c(7:9,1:6)]), scale = "row", cluster_rows = T,
                         cluster_cols = F,
                         colorRampPalette(c("#5390c1", "white", "#ea513f"))(100), show_rownames = F, treeheight_col =0, treeheight_row = 20)
@@ -27,7 +46,7 @@ TAMR_cluster = sapply(strsplit(TAMR_cluster, split = "_"), function(x) x[2])
 
 
 # statistics:
-library(limma)
+
 condition <- factor(sapply(strsplit(colnames(full), split = "_"), function(x) x[2]))
 table(condition)
 
@@ -42,10 +61,7 @@ nrow(design)
 ncol(full)
 
 # fit limma linear model:
-
 fit <- limma::lmFit(full, design=design, weights=NULL)
-
-
 
 # contrast matrix:
 condition1 = "TAMR"
@@ -54,24 +70,23 @@ condition2 = "WT"
 contrast_name <- paste0(condition1, '-', condition2)
 contrast_name
 
-
 contrast_matrix <- limma::makeContrasts(contrasts=eval(contrast_name),
                                         levels=design)
-
 fit_contrast <- limma::contrasts.fit(fit, contrast_matrix)
 # statistics with eBayes method:
 stats <- eBayes(fit_contrast, trend=T,robust = T)
 
 # get result in different format:
-# # change name!!!
-library(tidyverse)
+#
+
 stats_output <- limma::topTable(stats, coef=1, number=nrow(stats), adjust.method="BH", sort.by="none") %>% 
   drop_na()
 
-write.csv(stats_output, file = "20240523_LTED_vs_WT_limma_stats.csv", row.names = T)
-
-LTED_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/FULL/20240523_LTED_vs_WT_limma_stats.csv", row.names = 1)
-TAMR_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/FULL/20240523_TAMR_vs_WT_limma_stats.csv", row.names = 1)
+# optional: save the statistics output
+#write.csv(stats_output, file = "20240523_LTED_vs_WT_limma_stats.csv", row.names = T)
+# alternatively, read in the provided stats files (download and change path):
+LTED_stats = read.csv(paste0(your_path,"/20240523_LTED_vs_WT_limma_stats.csv"), row.names = 1)
+TAMR_stats = read.csv(paste0(your_path,"/20240523_TAMR_vs_WT_limma_stats.csv"), row.names = 1)
 
 
 rownames(LTED_stats) = sapply(strsplit(rownames(LTED_stats), split = "_"), function(x) x[2])
@@ -96,9 +111,7 @@ pheatmap(na.omit(full_sign[,c(7:9,1:6)]), scale = "row", cluster_rows = T,
 
 
 # PCA
-library(factoextra)
-library(ggplot2)
-library(ggpubr)
+
 metadata = data.frame(cell_line = rep(c("LTED", "TAMR", "WT"), each = 3))
 rownames(metadata) = colnames(full)[1:9]
 
@@ -136,23 +149,7 @@ ggarrange(f, p + theme_minimal()+
           ncol = 2, nrow = 2)
 
 
-# # stats from EV, already filtered for p < 0.05 and FC > 0.5
-# setwd("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/FULL/from_EV/")
-# 
-# LTED = read.csv("LTED_vs_WT_NormGrowth_FullProteome_09112023.tsv", sep = "\t", header = T)
-# TAMR = read.csv("TAMR_vs_WT_NormGrowth_FullProteome_09112023.tsv", sep = "\t", header = T)
-# 
-# LTED$Gene = sapply(strsplit(LTED$Protein_ID, split = "_"), function(x) x[2])
-# TAMR$Gene = sapply(strsplit(TAMR$Protein_ID, split = "_"), function(x) x[2])
-# rownames(LTED) = LTED$Gene
-# rownames(TAMR) = TAMR$Gene
-# 
-# TAMR_merged = merge(TAMR_stats, TAMR, by = 0)
-# LTED_merged = merge(LTED_stats, LTED, by = 0)
-# # identical FC, T, p-value as Efstathios' statistics
-# --> use mine from now on since it's not filtered yet
 
-library(wordcloud)
 
 WT_col = "#6bc4ca"
 LTED_col = "#e9457b"
@@ -186,13 +183,11 @@ textplot(TAMR_stats$logFC[TAMR_stats$adj.P.Val < 0.05 & abs(TAMR_stats$logFC) > 
 
 # Reactome GSEA:
 #BiocManager::install("ReactomePA")
-library(ReactomePA)
-require(DOSE)
-library(stats)
+
 
 # overrepresentation analysis of significant proteins:
 # # map gene names to Entrez ID
-library('org.Hs.eg.db')
+
 entrez_ID_lted = mapIds(org.Hs.eg.db, rownames(LTED_stats), 'ENTREZID', 'SYMBOL')
 entrez_ID_lted = as.vector(unname(entrez_ID_lted))
 LTED_stats = data.frame(LTED_stats, entrez_ID_lted)
@@ -280,7 +275,7 @@ gene_list_sorted = gene_list[order(gene_list, decreasing = T)]
 gene_list_sorted = gene_list_sorted[!duplicated(names(gene_list_sorted))]
 
 
-require(ReactomePA)
+
 
 y <- gsePathway(gene_list_sorted, 
                 minGSSize=120, pvalueCutoff=0.05, 
@@ -308,7 +303,6 @@ gene_list_sorted = gene_list[order(gene_list, decreasing = T)]
 gene_list_sorted = gene_list_sorted[!duplicated(names(gene_list_sorted))]
 
 
-require(ReactomePA)
 
 y <- gsePathway(gene_list_sorted, 
                 minGSSize=120, pvalueCutoff=0.05, 
@@ -330,11 +324,6 @@ y.heat + scale_fill_gradientn(colors = c("#5390c1","white", "#ea513f"),limits = 
 
 
 # Phospho proteome:
-setwd("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/PHOSPHO/")
-
-library(PhosR)
-load("Normal_Growth_Phospho_Normalized_Filt_Proc_05122023.RData")
-phospho = ppe_filt@assays@data@listData$Normalization
 
 phospho = data.frame(phospho)
 phospho$gene_site = sapply(strsplit(rownames(phospho), split = ";"), function(x) paste0(x[2],"_",x[3]))
@@ -351,7 +340,6 @@ pheatmap(na.omit(phospho_ordered[1:2000,c(7:9,1:6)]), scale = "row", cluster_row
 
 
 # statistics:
-library(limma)
 condition <- factor(sapply(strsplit(colnames(phospho)[1:9], split = "_"), function(x) x[3]))
 table(condition)
 
@@ -387,15 +375,13 @@ fit_contrast <- limma::contrasts.fit(fit, contrast_matrix)
 stats <- eBayes(fit_contrast, trend=T,robust = T)
 
 # get result in different format:
-# # change name!!!
-library(tidyverse)
 stats_output <- limma::topTable(stats, coef=1, number=nrow(stats), adjust.method="BH", sort.by="none") %>% 
   drop_na()
 
-write.csv(stats_output, file = "20240523_PHOSPHO_TAMR_vs_WT_limma_stats.csv", row.names = T)
-
-LTED_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/PHOSPHO/20240523_PHOSPHO_LTED_vs_WT_limma_stats.csv", row.names = 1)
-TAMR_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/PHOSPHO/20240523_PHOSPHO_TAMR_vs_WT_limma_stats.csv", row.names = 1)
+#write.csv(stats_output, file = "20240523_PHOSPHO_TAMR_vs_WT_limma_stats.csv", row.names = T)
+#alternatively, read in provided statistics:
+LTED_stats = read.csv(paste0(your_path,"20240523_PHOSPHO_LTED_vs_WT_limma_stats.csv"), row.names = 1)
+TAMR_stats = read.csv(paste0(your_path,"20240523_PHOSPHO_TAMR_vs_WT_limma_stats.csv"), row.names = 1)
 
 
 phospho_stats_merged = merge(LTED_stats, TAMR_stats, by = 0, all = T)
@@ -430,13 +416,9 @@ full_PAK1_targets = full_merged[PAK1_target_genes,]
 pheatmap(full_PAK1_targets[,c(1,7)], scale = "none", cluster_cols = F,cluster_rows = F, colorRampPalette(c("#5390c1", "white", "#ea513f"))(100), breaks = seq(-2,2,4/100), border_color = NA, treeheight_row = 0)
 
 
-#log2 FC:
-
-
 # kinase activities:
-setwd("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/PHOSPHO")
-LTED_kinases = read.csv("Out_RE_Analysis_NormalGrowth_Condition_Omnipath_Kin_Act_LTED_vs_WT_09112023.tsv", sep = "\t", header = T, stringsAsFactors = F)
-TAMR_kinases = read.csv("Out_RE_Analysis_NormalGrowth_Condition_Omnipath_Kin_Act_TAMR_vs_WT_09112023.tsv", sep = "\t", header = T, stringsAsFactors = F)
+LTED_kinases = read.csv(paste0(your_path,"Out_RE_Analysis_NormalGrowth_Condition_Omnipath_Kin_Act_LTED_vs_WT_09112023.tsv"), sep = "\t", header = T, stringsAsFactors = F)
+TAMR_kinases = read.csv(paste0(your_path,"Out_RE_Analysis_NormalGrowth_Condition_Omnipath_Kin_Act_TAMR_vs_WT_09112023.tsv"), sep = "\t", header = T, stringsAsFactors = F)
 
 kinases_merged = merge(LTED_kinases, TAMR_kinases, by = "Omnipath_Kinase", all = T)
 kinases_merged = na.omit(kinases_merged)
@@ -458,7 +440,7 @@ wordcloud::textplot(kinases_merged$score.x[abs(kinases_merged$score.x) > 2 | abs
                     kinases_merged$Omnipath_Kinase[abs(kinases_merged$score.x) > 2 | abs(kinases_merged$score.y) > 2], new = F, show.lines = T)
 
 
-# merge kinase activities with FP data:
+# merge kinase activities with Full Proteome data:
 rownames(kinases_merged) = kinases_merged$Omnipath_Kinase
 
 LTED_kinase_full_merged = merge(kinases_merged, LTED_stats, by = 0, all.x = T)
@@ -483,8 +465,8 @@ abline(h=0, lty = 2)
 abline(v=0, lty = 2)
 #abline(v=-2, lty = 2)
 
-# get Omnipath prior knowledge:
-library(OmnipathR)
+# get Omnipath prior knowledge about kinase-substrate networks:
+
 # import KSN from omnipath
 omnipath_ptm <- get_signed_ptms()
 
@@ -511,86 +493,6 @@ names(KSN)[c(1,2)] <- c("phospho_site","kinase")
 
 KSN_PAK1_targets = KSN[KSN$kinase == "PAK1",]
 
-# which kinases have PAK1 as target?
-KSN_PAK1 = KSN[grep("PAK1_", KSN$phospho_site),]
-
-upstream_kinases = unique(KSN_PAK1$kinase)
-full = data.frame(full)
-full$gene = sapply(strsplit(rownames(full), split = "_"), function(x) x[2])
-
-full_upstream = full[rownames(full) %in% upstream_kinases,]
-
-full_upstream$LTED = apply(full_upstream[,1:3], 1, mean, na.rm=T)
-full_upstream$TAMR = apply(full_upstream[,4:6], 1, mean, na.rm=T)
-full_upstream$WT = apply(full_upstream[,7:9], 1, mean, na.rm=T)
-
-
-
-library(pheatmap)
-pheatmap(na.omit(full_upstream[,1:9]),cluster_cols = F, scale = "row")
-
-#activities of these kinases:
-LTED_upstream_kinases_activities = LTED_kinases[LTED_kinases$Omnipath_Kinase %in% upstream_kinases,]
-TAMR_upstream_kinases_activities = TAMR_kinases[TAMR_kinases$Omnipath_Kinase %in% upstream_kinases,]
-
-par(mfrow=c(1,2))
-barplot(LTED_upstream_kinases_activities$score[order(LTED_upstream_kinases_activities$score,decreasing  = T)],ylim=c(-5,6), names.arg = LTED_upstream_kinases_activities$Omnipath_Kinase[order(LTED_upstream_kinases_activities$score, decreasing = T)], las = 2, main = "kinase activities upstream of PAK1\n (LTED vs. WT)", col = LTED_col)
-barplot(TAMR_upstream_kinases_activities$score[order(TAMR_upstream_kinases_activities$score,decreasing  = T)],ylim=c(-5,6), names.arg = TAMR_upstream_kinases_activities$Omnipath_Kinase[order(TAMR_upstream_kinases_activities$score, decreasing = T)], las = 2, main = "kinase activities upstream of PAK1\n (TAMR vs. WT)", col = TAMR_col)
-
-# merge upstream activities and kinases:
-upstream_kinases_merged = merge(full_upstream, LTED_upstream_kinases_activities, by.x = 0, by.y = "Omnipath_Kinase", all = T)
-upstream_kinases_merged = merge(upstream_kinases_merged, TAMR_upstream_kinases_activities, by.x = 1, by.y = "Omnipath_Kinase", all = T)
-
-rownames(upstream_kinases_merged) = upstream_kinases_merged$Row.names
-upstream_kinases_merged = upstream_kinases_merged[,-1]
-
-
-plot(upstream_kinases_merged$score.x, upstream_kinases_merged$LTED-upstream_kinases_merged$WT,xlim=c(-6,6),main = "kinases upstream of PAK1",ylim=c(-1,2), col = LTED_col, xlab = "kinase activity",pch=16, ylab = "kinase expression log2FC")
-textplot(upstream_kinases_merged$score.x[!is.na(upstream_kinases_merged$score.x) & !is.na(upstream_kinases_merged$LTED-upstream_kinases_merged$WT)],
-         c(upstream_kinases_merged$LTED-upstream_kinases_merged$WT)[!is.na(upstream_kinases_merged$score.x) & !is.na(upstream_kinases_merged$LTED-upstream_kinases_merged$WT)],
-         rownames(upstream_kinases_merged)[!is.na(upstream_kinases_merged$score.x) & !is.na(upstream_kinases_merged$LTED-upstream_kinases_merged$WT)], new = F)
-
-plot(upstream_kinases_merged$score.y, upstream_kinases_merged$TAMR-upstream_kinases_merged$WT, xlim=c(-6,6),main = "kinases upstream of PAK1",ylim=c(-1,2),col = TAMR_col, xlab = "kinase activity",pch=16, ylab = "kinase expression log2FC")
-textplot(upstream_kinases_merged$score.y[!is.na(upstream_kinases_merged$score.y) & !is.na(upstream_kinases_merged$TAMR-upstream_kinases_merged$WT)],
-         c(upstream_kinases_merged$TAMR-upstream_kinases_merged$WT)[!is.na(upstream_kinases_merged$score.y) & !is.na(upstream_kinases_merged$TAMR-upstream_kinases_merged$WT)],
-         rownames(upstream_kinases_merged)[!is.na(upstream_kinases_merged$score.y) & !is.na(upstream_kinases_merged$TAMR-upstream_kinases_merged$WT)], new = F)
-
-
-# what does this look like at time point 0?
-LTED_kinases_tp0 = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/kinase_activities_compared_to_WT/Out_Kin_Act_Total_Per_Timepoint/Out_RE_Analysis_Omnipath_Kin_Act_LTED_0_09112023.tsv", sep = "\t")
-TAMR_kinases_tp0 = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/kinase_activities_compared_to_WT/Out_Kin_Act_Total_Per_Timepoint/Out_RE_Analysis_Omnipath_Kin_Act_TAMR_0_09112023.tsv", sep = "\t")
-
-LTED_upstream_kinases_activities_tp0 = LTED_kinases_tp0[LTED_kinases_tp0$Omnipath_Kinase %in% upstream_kinases,]
-TAMR_upstream_kinases_activities_tp0 = TAMR_kinases_tp0[TAMR_kinases_tp0$Omnipath_Kinase %in% upstream_kinases,]
-
-par(mfrow=c(1,2))
-barplot(LTED_upstream_kinases_activities_tp0$score[order(LTED_upstream_kinases_activities_tp0$score,decreasing  = T)],ylim=c(-5,6), names.arg = LTED_upstream_kinases_activities_tp0$Omnipath_Kinase[order(LTED_upstream_kinases_activities_tp0$score, decreasing = T)], las = 2, main = "TP0: kinase activities upstream of PAK1 (LTED vs. WT)")
-barplot(TAMR_upstream_kinases_activities_tp0$score[order(TAMR_upstream_kinases_activities_tp0$score,decreasing  = T)],ylim=c(-5,6), names.arg = TAMR_upstream_kinases_activities_tp0$Omnipath_Kinase[order(TAMR_upstream_kinases_activities_tp0$score, decreasing = T)], las = 2, main = "TP0: kinase activities upstream of PAK1 (TAMR vs. WT)")
-
-
-# what does this look like at time point 10?
-LTED_kinases_tp10 = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/kinase_activities_compared_to_WT/Out_Kin_Act_Total_Per_Timepoint/Out_RE_Analysis_Omnipath_Kin_Act_LTED_10_09112023.tsv", sep = "\t")
-TAMR_kinases_tp10 = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/kinase_activities_compared_to_WT/Out_Kin_Act_Total_Per_Timepoint/Out_RE_Analysis_Omnipath_Kin_Act_TAMR_10_09112023.tsv", sep = "\t")
-
-LTED_upstream_kinases_activities_tp10 = LTED_kinases_tp10[LTED_kinases_tp10$Omnipath_Kinase %in% upstream_kinases,]
-TAMR_upstream_kinases_activities_tp10 = TAMR_kinases_tp10[TAMR_kinases_tp10$Omnipath_Kinase %in% upstream_kinases,]
-
-par(mfrow=c(1,2))
-barplot(LTED_upstream_kinases_activities_tp10$score[order(LTED_upstream_kinases_activities_tp10$score,decreasing  = T)],ylim=c(-5,6), names.arg = LTED_upstream_kinases_activities_tp10$Omnipath_Kinase[order(LTED_upstream_kinases_activities_tp10$score, decreasing = T)], las = 2, main = "TP10: kinase activities upstream of PAK1 (LTED vs. WT)")
-barplot(TAMR_upstream_kinases_activities_tp10$score[order(TAMR_upstream_kinases_activities_tp10$score,decreasing  = T)],ylim=c(-5,6), names.arg = TAMR_upstream_kinases_activities_tp10$Omnipath_Kinase[order(TAMR_upstream_kinases_activities_tp10$score, decreasing = T)], las = 2, main = "TP10: kinase activities upstream of PAK1 (TAMR vs. WT)")
-
-
-# phosphosites on PAK1:
-phospho = data.frame(phospho)
-phospho$gene_site = sapply(strsplit(rownames(phospho), split = ";", fixed = T), function(x) paste0(x[2], "_", x[3]))
-
-phospho_PAK1 = phospho[grep("PAK1_",phospho$gene_site),]
-# only this one site found: S144 (autophospho site)
-
-
-
-
-###################################
 
 PAK1_targets = KSN_PAK1_targets
 PAK1_targets$Target_Protein = sapply(strsplit(PAK1_targets$phospho_site, split = "_"), function(x) x[1])
@@ -636,81 +538,4 @@ subtract = rep(1:9, each = 3)
 for (i in seq(1,9,3)){
   normalGrowth_phospho_PAK1_targets_means[,i-(i-subtract[i])] <- apply(phospho_PAK1_targets[,i:(i+2)],1,mean,na.rm=T)
 }
-
-
-# merge normalGrowth with timeCourse_TP0:
-
-# Phospho proteome:
-setwd("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/from_Efstathios/")
-
-library(PhosR)
-load("phospho_normalized/RE_Analysis_TimeCourse_Phospho_Norm_Filt_Proc_09102023.RData")
-
-time_course_phospho = data.frame(ppe_filt@assays@data@listData$Normalization)
-
-time_course_phospho$gene_site = sapply(strsplit(rownames(time_course_phospho), split = ";", fixed = T), function(x) paste0(x[2],"_",x[3]))
-time_course_phospho = time_course_phospho[!duplicated(time_course_phospho$gene_site),]
-
-rownames(time_course_phospho) = time_course_phospho$gene_site
-
-time_course_phospho_PAK1_targets = time_course_phospho[rownames(time_course_phospho) %in% PAK1_targets$gene_site,]
-
-# calculate means:
-time_course_phospho_PAK1_targets_means = data.frame(matrix(NA, nrow=nrow(time_course_phospho_PAK1_targets), ncol = 63/3))
-colnames(time_course_phospho_PAK1_targets_means) = paste0(rep(c("LTED_", "TAMR_", "WT_"), each = 7), rep(c(0,2,5,10,20,60,120), 3))
-rownames(time_course_phospho_PAK1_targets_means) = rownames(time_course_phospho_PAK1_targets)
-
-subtract = rep(1:21, each = 3)
-
-for (i in seq(1,63,3)){
-  time_course_phospho_PAK1_targets_means[,i-(i-subtract[i])] <- apply(time_course_phospho_PAK1_targets[,i:(i+2)],1,mean,na.rm=T)
-}
-
-pheatmap(time_course_phospho_PAK1_targets_means, scale = "row", cluster_rows = T, cluster_cols = F)
-
-# merge normalGrowth with timeCourse_TP0:
-phospho_normal_TC0_PAK1Targets_merged = merge(normalGrowth_phospho_PAK1_targets_means, time_course_phospho_PAK1_targets_means[,c(1,8,15)], by = 0, all = T)
-rownames(phospho_normal_TC0_PAK1Targets_merged) =phospho_normal_TC0_PAK1Targets_merged$Row.names
-phospho_normal_TC0_PAK1Targets_merged = phospho_normal_TC0_PAK1Targets_merged[,-1]
-
-pheatmap(phospho_normal_TC0_PAK1Targets_merged, scale = "none", cluster_rows = T, cluster_cols = F)
-
-
-phospho_normal_TC0_PAK1Targets_merged$FC_LTED_WT_normal = apply(phospho_normal_TC0_PAK1Targets_merged[,c(1,3)],1, function(x) x[1]-x[2])
-phospho_normal_TC0_PAK1Targets_merged$FC_TAMR_WT_normal = apply(phospho_normal_TC0_PAK1Targets_merged[,c(2,3)],1, function(x) x[1]-x[2])
-phospho_normal_TC0_PAK1Targets_merged$FC_LTED_WT_starved = apply(phospho_normal_TC0_PAK1Targets_merged[,c(4,6)],1, function(x) x[1]-x[2])
-phospho_normal_TC0_PAK1Targets_merged$FC_TAMR_WT_starved = apply(phospho_normal_TC0_PAK1Targets_merged[,c(5,6)],1, function(x) x[1]-x[2])
-
-pheatmap(phospho_normal_TC0_PAK1Targets_merged[,c(7,9,8,10)], cluster_rows = F, cluster_cols = F, scale = "none", breaks = seq(-3,3,6/100))
-
-
-for (i in 1:nrow(phospho_normal_TC0_PAK1Targets_merged)){
-  pg.bar = barplot(data.matrix(phospho_normal_TC0_PAK1Targets_merged[i,c(7,9,8,10)]), las = 2, main = rownames(phospho_normal_TC0_PAK1Targets_merged)[i])
-  #segments(x0 = pg.bar, y0 = (normal_TP0_PAK1Targets_merged[i,c(1:3,7:9)]-(normal_TP0_PAK1Targets_merged[i,c(4:6,10:12)], y1 = (normal_TP0_PAK1Targets_merged[i,c(1:3,7:9)]+(normal_TP0_PAK1Targets_merged[i,c(4:6,10:12)])
-}
-
-
-
-# divide phospho by full protein intensity:
-
-
-rownames(phospho_PAK1_targets)
-rownames(full_PAK1_targets)
-
-
-phospho_PAK1_targets_norm = data.frame(phospho_PAK1_targets)
-phospho_PAK1_targets_norm$gene = sapply(strsplit(rownames((phospho_PAK1_targets_norm)), split = "_"), function(x) x[1])
-
-for (i in 1:nrow(phospho_PAK1_targets_norm)){
-  phospho_PAK1_targets_norm[i,1:9] = phospho_PAK1_targets_norm[i,1:9]/full_PAK1_targets[phospho_PAK1_targets_norm$gene[i],1:9]
-}
-
-pheatmap(phospho_PAK1_targets_norm[,1:9],cluster_cols = F,cluster_rows = F, scale = "row")
-
-phospho_PAK1_targets_norm$mean_LTED = apply(phospho_PAK1_targets_norm[,1:3], 1, mean, na.rm=T)
-phospho_PAK1_targets_norm$mean_TAMR = apply(phospho_PAK1_targets_norm[,4:6], 1, mean, na.rm=T)
-phospho_PAK1_targets_norm$mean_WT = apply(phospho_PAK1_targets_norm[,7:9], 1, mean, na.rm=T)
-
-
-pheatmap(phospho_PAK1_targets_norm[,11:13],cluster_cols = F,cluster_rows = F, scale = "row")
 
