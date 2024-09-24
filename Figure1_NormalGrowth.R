@@ -15,7 +15,7 @@ require(DOSE)
 library(stats)
 library('org.Hs.eg.db')
 library(OmnipathR)
-
+library(clusterProfiler)
 
 your_path = "K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/normal_growth_condition/FULL/"
 #read in data:
@@ -197,28 +197,28 @@ entrez_ID_tamr = as.vector(unname(entrez_ID_tamr))
 TAMR_stats = data.frame(TAMR_stats, entrez_ID_tamr)
 
 
-LTED_UP = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & LTED_stats$logFC > 0]
-TAMR_UP = TAMR_stats$entrez_ID[TAMR_stats$adj.P.Val < 0.05 & TAMR_stats$logFC > 0]
-LTED_DOWN = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & LTED_stats$logFC < 0]
-TAMR_DOWN = TAMR_stats$entrez_ID[TAMR_stats$adj.P.Val < 0.05 & TAMR_stats$logFC < 0]
-LTED_sign = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & abs(LTED_stats$logFC) > 1.5]
-TAMR_sign = TAMR_stats$entrez_ID[TAMR_stats$adj.P.Val < 0.05 & abs(TAMR_stats$logFC) > 1.5]
-
-LTED_up_enrich <- enrichPathway(gene=LTED_UP,pvalueCutoff=0.05, readable=T, universe = LTED_stats$entrez_ID, pAdjustMethod = "BH")
-TAMR_up_enrich <- enrichPathway(gene=TAMR_UP,pvalueCutoff=0.05, readable=T, universe = TAMR_stats$entrez_ID, pAdjustMethod = "BH")
-LTED_down_enrich <- enrichPathway(gene=LTED_DOWN,pvalueCutoff=0.05, readable=T, universe = LTED_stats$entrez_ID, pAdjustMethod = "BH")
-TAMR_down_enrich <- enrichPathway(gene=TAMR_DOWN,pvalueCutoff=0.05, readable=T, universe = TAMR_stats$entrez_ID, pAdjustMethod = "BH")
-LTED_sign_enrich <- enrichPathway(gene=LTED_sign,pvalueCutoff=0.05, readable=T, universe = LTED_stats$entrez_ID, pAdjustMethod = "BH")
-TAMR_sign_enrich <- enrichPathway(gene=TAMR_sign,pvalueCutoff=0.05, readable=T, universe = TAMR_stats$entrez_ID, pAdjustMethod = "BH")
-
-
-
-dotplot(LTED_up_enrich,showCategory=10)
-dotplot(TAMR_up_enrich,  showCategory=10)
-dotplot(LTED_down_enrich, showCategory=10)
-dotplot(TAMR_down_enrich, showCategory=10)
-dotplot(LTED_sign_enrich, showCategory=10)
-dotplot(TAMR_sign_enrich, showCategory=10)
+# LTED_UP = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & LTED_stats$logFC > 0]
+# TAMR_UP = TAMR_stats$entrez_ID[TAMR_stats$adj.P.Val < 0.05 & TAMR_stats$logFC > 0]
+# LTED_DOWN = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & LTED_stats$logFC < 0]
+# TAMR_DOWN = TAMR_stats$entrez_ID[TAMR_stats$adj.P.Val < 0.05 & TAMR_stats$logFC < 0]
+# LTED_sign = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & abs(LTED_stats$logFC) > 1.5]
+# TAMR_sign = TAMR_stats$entrez_ID[TAMR_stats$adj.P.Val < 0.05 & abs(TAMR_stats$logFC) > 1.5]
+# 
+# LTED_up_enrich <- enrichPathway(gene=LTED_UP,pvalueCutoff=0.05, readable=T, universe = LTED_stats$entrez_ID, pAdjustMethod = "BH")
+# TAMR_up_enrich <- enrichPathway(gene=TAMR_UP,pvalueCutoff=0.05, readable=T, universe = TAMR_stats$entrez_ID, pAdjustMethod = "BH")
+# LTED_down_enrich <- enrichPathway(gene=LTED_DOWN,pvalueCutoff=0.05, readable=T, universe = LTED_stats$entrez_ID, pAdjustMethod = "BH")
+# TAMR_down_enrich <- enrichPathway(gene=TAMR_DOWN,pvalueCutoff=0.05, readable=T, universe = TAMR_stats$entrez_ID, pAdjustMethod = "BH")
+# LTED_sign_enrich <- enrichPathway(gene=LTED_sign,pvalueCutoff=0.05, readable=T, universe = LTED_stats$entrez_ID, pAdjustMethod = "BH")
+# TAMR_sign_enrich <- enrichPathway(gene=TAMR_sign,pvalueCutoff=0.05, readable=T, universe = TAMR_stats$entrez_ID, pAdjustMethod = "BH")
+# 
+# 
+# 
+# dotplot(LTED_up_enrich,showCategory=10)
+# dotplot(TAMR_up_enrich,  showCategory=10)
+# dotplot(LTED_down_enrich, showCategory=10)
+# dotplot(TAMR_down_enrich, showCategory=10)
+# dotplot(LTED_sign_enrich, showCategory=10)
+# dotplot(TAMR_sign_enrich, showCategory=10)
 
 gcSample= list(LTED_UP = LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & LTED_stats$logFC > 1], 
                LTED_DOWN =  LTED_stats$entrez_ID[LTED_stats$adj.P.Val < 0.05 & LTED_stats$logFC < 1],
