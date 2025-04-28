@@ -2,7 +2,7 @@
 # data filtered & normalized by EV
 
 load("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/from_Efstathios/full_normalized/TimeCourse_FullProteome_Normalized_Filt_Proc_17052024.rda")
-
+library(pheatmap)
 
 full_timeCourse = data.frame(se_final@assays@data@listData$Norm_Filt)
 full_timeCourse$gene = sapply(strsplit(rownames(full_timeCourse), split = "_"), function(x) x[2])
@@ -55,6 +55,10 @@ TC_full_PAK1_targets_means_sd$sd_LTED_WT = apply(TC_full_PAK1_targets_means_sd[,
 TC_full_PAK1_targets_means_sd$sd_TAMR_WT = apply(TC_full_PAK1_targets_means_sd[,c(9:15, 16:22)], 1, function(x) sd(x[1:7]-x[8:14], na.rm=T))
 
 TC_full_PAK1_targets_means_sd = TC_full_PAK1_targets_means_sd[-9,]
+TC_full_PAK1_targets_means_sd = TC_full_PAK1_targets_means_sd[!is.na(TC_full_PAK1_targets_means_sd$FC_LTED_WT) & !is.na(TC_full_PAK1_targets_means_sd$FC_TAMR_WT),]
+
+TC_full_PAK1_targets_means_sd$p_LTED_WT = apply(TC_full_PAK1_targets_means_sd[,c(2:8, 16:22)], 1, function(x) t.test(x[1:7],x[8:14])$p.value)
+TC_full_PAK1_targets_means_sd$p_TAMR_WT = apply(TC_full_PAK1_targets_means_sd[,c(9:15, 16:22)], 1, function(x) t.test(x[1:7],x[8:14])$p.value)
 
 par(mfrow=c(1,1))
 par(mar=c(5,5,5,5))
@@ -120,6 +124,10 @@ phospho_timeCourse_means_sd$FC_TAMR_WT = apply(phospho_timeCourse_means_sd[,c(8:
 phospho_timeCourse_means_sd$sd_LTED_WT = apply(phospho_timeCourse_means_sd[,c(1:7, 15:21)], 1, function(x) sd(x[1:7]-x[8:14], na.rm=T))
 phospho_timeCourse_means_sd$sd_TAMR_WT = apply(phospho_timeCourse_means_sd[,c(8:14, 15:21)], 1, function(x) sd(x[1:7]-x[8:14], na.rm=T))
 
+phospho_timeCourse_means_sd = phospho_timeCourse_means_sd[!is.na(phospho_timeCourse_means_sd$FC_LTED_WT) & !is.na(phospho_timeCourse_means_sd$FC_TAMR_WT),]
+
+phospho_timeCourse_means_sd$p_LTED_WT = apply(phospho_timeCourse_means_sd[,c(1:7, 15:21)], 1, function(x) t.test(x[1:7],x[8:14])$p.value)
+phospho_timeCourse_means_sd$p_TAMR_WT = apply(phospho_timeCourse_means_sd[,c(8:14, 15:21)], 1, function(x) t.test(x[1:7],x[8:14])$p.value)
 
 
 par(mfrow=c(1,1))
@@ -130,7 +138,9 @@ abline(v=0, lty = 2)
 segments(x0 = phospho_timeCourse_means_sd$FC_LTED_WT-phospho_timeCourse_means_sd$sd_LTED_WT/sqrt(3), x1 = phospho_timeCourse_means_sd$FC_LTED_WT+phospho_timeCourse_means_sd$sd_LTED_WT/sqrt(3), y0 = phospho_timeCourse_means_sd$FC_TAMR_WT, col = "#876cad", lwd = 2)
 segments(y0 = phospho_timeCourse_means_sd$FC_TAMR_WT-phospho_timeCourse_means_sd$sd_TAMR_WT/sqrt(3), y1 = phospho_timeCourse_means_sd$FC_TAMR_WT+phospho_timeCourse_means_sd$sd_TAMR_WT/sqrt(3), x0 = phospho_timeCourse_means_sd$FC_LTED_WT, col = "#d76d17", lwd = 2)
 library(wordcloud)
-textplot(phospho_timeCourse_means_sd$FC_LTED_WT[!is.na(phospho_timeCourse_means_sd$FC_LTED_WT) & !is.na(phospho_timeCourse_means_sd$FC_TAMR_WT)], phospho_timeCourse_means_sd$FC_TAMR_WT[!is.na(phospho_timeCourse_means_sd$FC_LTED_WT) & !is.na(phospho_timeCourse_means_sd$FC_TAMR_WT)], rownames(phospho_timeCourse_means_sd)[!is.na(phospho_timeCourse_means_sd$FC_LTED_WT) & !is.na(phospho_timeCourse_means_sd$FC_TAMR_WT)], new = F, show.lines = F)
+textplot(phospho_timeCourse_means_sd$FC_LTED_WT[phospho_timeCourse_means_sd$p_LTED_WT < 0.05 | phospho_timeCourse_means_sd$p_TAMR_WT < 0.05],
+         phospho_timeCourse_means_sd$FC_TAMR_WT[phospho_timeCourse_means_sd$p_LTED_WT < 0.05 | phospho_timeCourse_means_sd$p_TAMR_WT < 0.05],
+         rownames(phospho_timeCourse_means_sd)[phospho_timeCourse_means_sd$p_LTED_WT < 0.05 | phospho_timeCourse_means_sd$p_TAMR_WT < 0.05], new = F, show.lines = T)
 
 # merge phospho and full:
 phospho_timeCourse_means_sd$gene = sapply(strsplit(rownames(phospho_timeCourse_means_sd), "_"), function(x) x[1])

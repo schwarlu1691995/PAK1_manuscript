@@ -1,0 +1,403 @@
+---
+title: "CPTAC.BRCA.Tutorial.Phospho"
+author: "Efstathios Vlachavas"
+date: "2022-09-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Firstly, load the necessary R packages
+
+```{r}
+
+library(tidyverse)
+library(limma)
+library(decoupleR)
+library(readr)
+library(OmnipathR)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(forcats)
+library(statmod)
+library(limma)
+library(vsn)
+library(hexbin)
+
+```
+
+Start with the phosphoproteomics analysis
+
+```{r}
+
+
+load("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/from_Efstathios/phospho_normalized/RE_Analysis_TimeCourse_Phospho_Norm_Filt_Proc_09102023.RData")
+
+norm.mat <- ppe_filt@assays@data$Normalization
+norm.mat = data.frame(norm.mat)
+library(stringr)
+norm.mat$gene = sapply(str_split(rownames(norm.mat), pattern = ";"), function(x) x[2])
+norm.mat$site = sapply(str_split(rownames(norm.mat), pattern = ";"), function(x) x[3])
+
+colnames(norm.mat)
+
+########################################################
+
+
+dat.phospho.clean <- norm.mat[!rowSums(is.na(norm.mat[,1:63])) > 50, ] #  80% of total 40 samples; after filtering, 17413 features remained
+
+
+condition = sapply(strsplit(colnames(dat.phospho.clean)[1:63], split = "_", fixed = T), function(x) paste0(x[1],"_", x[2]))
+
+library(pheatmap)
+my_sample_col <- data.frame(sample =condition)
+row.names(my_sample_col) <- colnames(dat.phospho.clean)[1:63]
+
+pheatmap((dat.phospho.clean[,1:63]), scale = "row",cluster_rows = F, annotation_col = my_sample_col, breaks = seq(-4,4,8/100))
+
+
+# 
+# #remove NaN, replace with NA
+dat.phospho.clean[is.nan(data.matrix(dat.phospho.clean))]<-NA
+# 
+# 
+
+boxplot(dat.phospho.clean[,1:63])
+
+# # add gene and site columns:
+
+
+norm.mat = dat.phospho.clean[,1:63]
+
+norm.mat$gene = sapply(strsplit(rownames(norm.mat), split=";"), function(x) x[2])
+norm.mat$site = sapply(strsplit(rownames(norm.mat), split=";"), function(x) x[3])
+
+
+
+# replace duplicated sites (M1, M2...) with sum:
+norm.mat$gene_site = paste0(norm.mat$gene, "_", norm.mat$site)
+table(duplicated(norm.mat$gene_site))
+# 9 duplicates entries for gene+phosphosite combination
+
+duplicated_sites = unique(norm.mat$gene_site[duplicated(norm.mat$gene_site)])
+
+
+norm.mat = norm.mat[!norm.mat$gene_site %in% duplicated_sites,]
+
+
+# 17395 entries left
+
+
+# save filtered and duplicates-summed file:
+write.csv(norm.mat, file = "K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/20240618_filtered_phospho.csv", row.names = T)
+
+
+########################################################################################
+# START HERE WITH NORMALIZED, FILTERED, DUPLICATES SUMMED DATA
+##########################################################################################
+#
+#
+#
+norm.mat_duplicated_summed = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/20240618_filtered_phospho.csv", header = T, stringsAsFactors = F, row.names = 1)
+#
+
+rownames(norm.mat_duplicated_summed) = norm.mat_duplicated_summed$gene_site
+# continue with setting the design matrix and perform DE analysis with limma R package
+# create a vector that contains the different conditions of your experiment (in the order that they appear in your data --> best use the colnames (minus replicates))
+
+
+
+cond_vec <- as.factor(condition)
+
+table(cond_vec)
+
+design <- model.matrix(~0 + cond_vec)
+colnames(design) <- gsub("cond_vec", "", colnames(design))
+phospho.mat = norm.mat_duplicated_summed[,1:63]
+
+
+
+fit <- lmFit(phospho.mat,design)
+
+#change the comparison that you want 
+##!!! rename
+cm <- makeContrasts(Comp1= LTED_0-TAMR_0,
+                     levels = colnames(coef(fit)))
+
+
+fit2 <- contrasts.fit(fit, cm)
+
+fit3 <- eBayes(fit2, trend=T,robust = T)
+
+#!! rename
+comp1_stat <- limma::topTable(fit3, coef=1, number=nrow(fit3), adjust.method="fdr", sort.by="none") %>% dplyr::select(t) %>% dplyr::rename(TAMR_2_vs_TAMR_0=t) %>% drop_na()
+
+# the comp1_stat data frame needs to consist of a single column containing the T-stats
+# the rownames have to be gene_phosphosite (e.g. AKT1_S473)
+head(comp1_stat)
+
+
+# this we will use downstream for pathway activity
+# # !!! rename
+comp1_stat_downstream <- limma::topTable(fit3, coef=1, number=nrow(fit3), adjust.method="fdr", sort.by="none") %>% 
+  dplyr::select(t) %>% 
+  dplyr::rename(LTED_0_vs_TAMR_0=t) %>% 
+  drop_na() %>%
+  rownames_to_column() %>% 
+  separate("rowname", sep="_", into=c("GeneSymbol","PhosID"))
+
+head(comp1_stat_downstream)
+# matrix should contain GeneSymbol, PhosID and Stats
+# 
+
+
+
+# optional saving of the additional res file (change file name!)
+#!!!
+write_tsv(comp1_stat_downstream, file="K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/phospho_stats_within_cell_line/20240618_stats_LTED0_vs_TAMR0.tsv")
+
+
+
+##############################################################################
+#
+# START HERE WITH STATS TSV FILE 
+# 
+# ############################################################################
+#comp1_stat = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/kinase_activities_at_normal_cultivation/20221129_normalized_T47D_TAMR_vs_WT_stats.tsv", sep = "\t", header = T, stringsAsFactors = F)
+
+#rownames(comp1_stat) = paste0(comp1_stat$GeneSymbol, "_", comp1_stat$PhosID)
+
+#comp1_stat = comp1_stat[,3, drop = F]
+
+# Then we continue with first step of the construction of the OMNIPATH network
+
+# import KSN from omnipath
+omnipath_ptm <- get_signed_ptms()
+
+# likely erroneous database records: As all databases, the resources constituting OmniPath contain wrong records, some of them more, others less. Here we see all these records are from only one resource called ProtMapper. ProtMapper uses literature mining algorithms (REACH, Sparser), which are known to produce a number of false positives in their output. On this premise:
+
+omnipath_ptm <- omnipath_ptm %>% filter(!grepl('ProtMapper', sources) | n_resources > 1)
+
+# Which means: not from ProtMapper, or from more than one resource (i.e. if it is from ProtMapper, but also another resource confirms, then we keep the record).
+
+omnipath_ptm <- omnipath_ptm[omnipath_ptm$modification %in% c("dephosphorylation","phosphorylation"),]
+KSN <- omnipath_ptm[,c(4,3)]
+KSN$substrate_genesymbol <- paste(KSN$substrate_genesymbol,omnipath_ptm$residue_type, sep ="_")
+KSN$substrate_genesymbol <- paste(KSN$substrate_genesymbol,omnipath_ptm$residue_offset, sep = "")
+KSN$mor <- ifelse(omnipath_ptm$modification == "phosphorylation", 1, -1)
+KSN$likelihood <- 1
+
+#we remove ambiguous modes of regulations
+KSN$id <- paste(KSN$substrate_genesymbol,KSN$enzyme_genesymbol,sep ="")
+KSN <- KSN[!duplicated(KSN$id),]
+KSN <- KSN[,-5]
+
+#rename KSN to fit decoupler format for downstream analysis
+names(KSN)[c(1,2)] <- c("phospho_site","kinase")
+
+# refine the network to include kinases with at least 5 targets
+#!!!
+KSN_exp_1 <- intersect_regulons(as.matrix(comp1_stat), KSN, .source = kinase, .target = phospho_site, minsize=5) 
+
+# General comment: we can also run the activity inference score on our normalized intesity matrix of phosphosites directly, as long as it is formatted like here or as a dataframe. More information for users to check for more info on the available algorithms:   https://github.com/saezlab/decoupleR
+
+kin_activity_1 <- run_wmean(mat = as.matrix(comp1_stat), .source = "kinase", .target = "phospho_site",network = KSN_exp_1, times = 1000)
+
+#format the DF for visualization purposes
+
+kin_activity_1 <- kin_activity_1[kin_activity_1$statistic == "norm_wmean",c(2,4)] %>% column_to_rownames(var="source")
+
+# also save the total output to investigate in more detail
+kin.activity.output <- kin_activity_1 %>% rownames_to_column(var="Omnipath_Kinase")
+head(kin.activity.output)
+#!!! rename
+write_tsv(kin.activity.output,file="K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp08_MCF7_EGF_phospho_dynamics/re-analysis_SN17/20230912_PHOSPHO/phospho_stats_within_cell_line/20240618_kinase_activities_LTED0_vs_TAMR0.tsv")
+
+# Implement a specific plotting function:
+# https://github.com/saezlab/kinase_tf_mini_tuto/blob/main/code/utils.R
+ 
+plot_top_features <- function(data, n_top) {
+
+  colnames(data) <- "value"
+
+  arranged <- data %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column(var = "id") %>%
+    arrange(desc(value))
+
+  top_up <- slice_head(arranged, n = n_top)
+  top_down <- slice_tail(arranged, n = n_top)
+
+  p <- bind_rows(list(up = top_up, down = top_down), .id = "status") %>%
+    mutate(id = fct_inorder(id)) %>%
+    ggplot(aes(x = value, y = id, fill = status)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = c("up" = "red4", "down" = "mediumblue")) +
+    theme_bw()
+
+  return(p)
+
+}
+
+# Separate EDA plots wih the top10 UO/DOWN MOST PERTURBED KINASES FOR THE 3 COMPARISONS
+# change the plot title!
+
+
+plot_top_features(kin_activity_1, n_top = 10) +
+  ggtitle('LTED vs. TAMR (tp 0)')
+
+kin_activity_1_pak1 = kin_activity_1[rownames(kin_activity_1) %in% KSN$kinase[grep("PAK1_", KSN$phospho_site)],, drop = F]
+
+plot_top_features(kin_activity_1_pak1, n_top = 10) +
+  ggtitle('LTED vs. TAMR (tp 0, PAK1-upstream kinases)')
+
+# 
+# # plot heatmap of target sites of interesting kinases:
+# 
+# my_sample_col <- data.frame(responder = rep(c("responder", "non_responder", "responder", "non_responder", "non_responder", "non_responder", "responder", "responder"), each = 5))
+# row.names(my_sample_col) <- colnames(phospho.mat)[1:40]
+# 
+# 
+# plot_target_sites_heatmap = function(kinase_name){
+#   pheatmap(na.omit(phospho.mat[KSN_exp_1$phospho_site[KSN_exp_1$kinase==kinase_name], seq(1,40,5)]), scale = "row", annotation_col = my_sample_col)
+# }
+# 
+# plot_target_sites_heatmap("AKT1")
+# 
+# 
+# # plot intensity of interesting phosphosites
+# 
+# plotting_order = c(1,11,31,36,2,12,32,37,5,15,35,40,3,13,33,38,4,14,34,39,6,16,21,26,7,17,22,27,10,20,25,30,8,18,23,28,9,19,24,29)
+# 
+# colnames(phospho.mat)[plotting_order]
+# 
+# gene_site = sapply(strsplit(rownames(phospho.mat), split="_"), function(x) paste0(x[1],"_",x[2]))
+# library("RColorBrewer")
+# display.brewer.all()
+# display.brewer.pal(n = 8, name = 'Blues')
+# responder_organoid_colors = brewer.pal(n = 8, name = "Blues")[5:8]
+# 
+# display.brewer.pal(n = 8, name = 'Reds')
+# 
+# non_responder_organoid_colors = brewer.pal(n = 8, name = "Reds")[5:8]
+# 
+# 
+# plot_interesting_site = function(site_of_interest){
+#   plot(rep(c(1:10), each = 4), phospho.mat[gene_site == site_of_interest,plotting_order], main = rownames(phospho.mat)[gene_site == site_of_interest], xaxt = "n", xlab = "",ylab = "log2 intensity", pch = 16, col = c(rep(responder_organoid_colors,5), rep(non_responder_organoid_colors, 5)))
+#   text(x = 1:10, y = range(phospho.mat[gene_site == site_of_interest,], na.rm=T)[1]*0.95, xpd=T, labels = rep(c("DMSO","Geda","Vistu","PRI","SN38"),2))
+#   text(x = c(2.5,7.5), y = range(phospho.mat[gene_site == site_of_interest,], na.rm=T)[1]*0.9, xpd=T, labels = c("responder","non-responder"))
+#   segments(x0=1, x1=5, y0=range(phospho.mat[gene_site == site_of_interest,], na.rm=T)[1]*0.925, xpd = T)
+#   segments(x0=6, x1=10, y0=range(phospho.mat[gene_site == site_of_interest,], na.rm=T)[1]*0.925, xpd = T)
+# }
+# 
+# plot_interesting_site("AKT1_S129")
+# 
+# 
+# # plot all phosphosites of a gene of interest:
+# 
+# plot_gene_of_interest = function(gene_of_interest){
+#   number_of_sites = length(grep(paste0(gene_of_interest,"_"), rownames(phospho.mat)))
+#   all_gene_sites = sapply(strsplit(rownames(phospho.mat)[grep(paste0(gene_of_interest,"_"), rownames(phospho.mat))], split="_"), function(x) paste0(x[1],"_",x[2]))
+#   for (i in 1:number_of_sites){
+#     plot_interesting_site(all_gene_sites[i])
+#   }
+# }
+# 
+# 
+# 
+# plot_gene_of_interest("CTNNB1")
+# 
+
+
+
+```
+
+Pathway activity based on the DE results from above and the PTMSigDB resource
+
+```{r}
+
+# Continue from the previous code chunk;
+
+# Initially we need to match the features IDs of our DE results, in order to retrieve the respective  UniprotIDs from gene symbols; some resources/examples of converting different molecular entity formats are listed below:
+
+# https://www.uniprot.org/
+# https://www.uniprot.org/help/gene_symbol_mapping
+# https://yulab-smu.top/biomedical-knowledge-mining-book/useful-utilities.html
+# https://www.biostars.org/p/90683/
+
+# For simplicity, we will use the function mapIds from the R package org.Hs.eg.db:
+
+xx <- unique(comp1_stat_downstream$GeneSymbol) # the gene symbols of interest
+
+# query the matching uniprotIDs
+uni.ids <-mapIds(org.Hs.eg.db, keys=xx, column="UNIPROT", keytype="SYMBOL", multiVals="first")
+uni.ids2 <- uni.ids %>% enframe(name="Gene_Symbol",value="Uniprot_ID") # Attention !!
+# from checking above, different gene symbols can map to the same UniprotID; on this purpose further remove them;
+
+table(duplicated(uni.ids2$Gene_Symbol))
+table(duplicated(uni.ids2$Uniprot_ID))
+uni.ids3 <- uni.ids2[!duplicated(uni.ids2$Uniprot_ID),]
+
+# merge the two DFs to have the uniprotIDs along with the phosphositeIDs
+merged.de.dat <- inner_join(comp1_stat_downstream, uni.ids3, by=c("GeneSymbol"="Gene_Symbol"))
+
+# final formating of our input file measurements
+merged.de.dat.format <- merged.de.dat %>% unite("Final.Feature", c("Uniprot_ID","PhosID"), sep=";",remove = FALSE) %>%
+dplyr::select(Final.Feature, LTED10_vs_WT10) %>% dplyr::distinct(Final.Feature,.keep_all=TRUE) %>% column_to_rownames("Final.Feature")
+
+# continue with the respective PTMSigDB database gmt file:
+# download from here: https://proteomics.broadapps.org/ptmsigdb/ (version: v1.9.1)
+library(clusterProfiler)
+
+dt.gmt <- clusterProfiler::read.gmt("ptm.sig.db.all.uniprot.human.v1.9.1.gmt")
+
+# Break gene into compartments; also subset term into specific terms;
+
+sel.terms.2 <- str_detect(dt.gmt$term, "KINASE-|PATH-|DISEASE-PSP")
+dt.gmt.sel <- dt.gmt[sel.terms.2,]
+
+dt.gmt.sel.clean <- dt.gmt.sel %>% mutate(Col_new=str_remove_all(gene, "-."))
+
+dat.phospho.sel <- dt.gmt.sel.clean %>% separate(Col_new, into=c("uniprot","phospho_id","direction"), sep=";") %>% mutate(phospho_id_clean=str_remove(phospho_id, "-p")) %>% unite("Final.Feature", c("uniprot","phospho_id_clean"), sep=";",remove = FALSE) %>% mutate(mor=if_else(direction=="u",1,-1)) %>% mutate(likelihood=1) %>% dplyr::select(term, Final.Feature, mor, likelihood) %>% rownames_to_column() %>% dplyr::select(-rowname)
+
+KSN_exp_1 <- intersect_regulons(as.matrix(merged.de.dat.format), dat.phospho.sel, 
+             .source = term, .target = Final.Feature, minsize=5)
+
+# to remove any repeated edges
+KSN_exp_1_clean <- KSN_exp_1 %>% dplyr::distinct(term, Final.Feature,.keep_all=TRUE)
+
+# similarly as before we implement the function run_wmean to inder pathway activities:
+PATH_Act <- run_wmean(mat = as.matrix(merged.de.dat.format), .source = "term", .target = "Final.Feature", network = KSN_exp_1_clean, times = 1000)
+Path_Act <- PATH_Act[PATH_Act$statistic == "norm_wmean",c(2,4,5)] 
+
+x3 <- Path_Act %>% dplyr::mutate(Combo_score = abs(score*p_value))
+
+x4 <- arrange(x3, desc(abs(Combo_score))) %>%
+group_by(sign(Combo_score)) %>%
+dplyr::slice(1:10)
+
+# optional: create and save a customized barplot of visualizing the top results:
+# the following function was also inspired by the clusterProfiler R package (https://doi.org/10.1016/j.xinn.2021.100141) tutorial: https://yulab-smu.github.io/clusterProfiler-book/
+
+png("Custom.Barplot.Example.PTMSigDB.ER_Pos_vs_ER_Neg.06102022.png", width = 12, height = 8, 
+units = 'in', res = 300)
+
+ggplot(x4, showCategory = 10,
+aes(Combo_score, #richFactor
+fct_reorder(source, abs(score)))) +
+geom_segment(aes(xend=0, yend = source)) +
+geom_point(aes(color=p_value, size = abs(score))) +
+scale_color_gradientn(colours=c("#f7ca64", "#46bac2",
+"#7e62a3"),
+trans = "log10",
+guide=guide_colorbar(reverse=TRUE,
+order=1)) +
+scale_size_continuous(range=c(2, 10)) +
+theme_dose(12) +
+xlab("Combined Score") +
+ylab(NULL) + 
+ggtitle("PTMSigDB Pathways")
+
+dev.off()
+
+```
