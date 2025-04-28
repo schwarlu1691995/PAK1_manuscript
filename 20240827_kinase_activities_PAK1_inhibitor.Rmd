@@ -1,0 +1,481 @@
+---
+title: "CPTAC.BRCA.Tutorial.Phospho"
+author: "Efstathios Vlachavas"
+date: "2022-09-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Firstly, load the necessary R packages
+
+```{r}
+
+library(tidyverse)
+library(limma)
+library(decoupleR)
+library(readr)
+library(OmnipathR)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(forcats)
+library(statmod)
+library(limma)
+library(vsn)
+library(hexbin)
+
+```
+
+Start with the phosphoproteomics analysis
+
+```{r}
+# load your phospho-proteome data
+# if they are raw intensities: filter out phosphosites with many NAs (> 20%), perform VSN normalization
+# remove duplicates combinations of Gene+Phosphosite (will lead to problems with duplicated rownames later on)
+
+pak1_phospho = read.delim("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_151933_20240826_Exp61_PAK1inh_PHOSPHO_Report_loc95.txt")
+
+pak1_phospho$gene_site = sapply(strsplit(pak1_phospho$T..PTM_collapse_key, split = "_", fixed = T), function(x) paste0(x[1], "_", x[2]))
+
+# remove NaN
+is.nan.data.frame <- function(x)
+  do.call(cbind, lapply(x, is.nan))
+
+pak1_phospho[is.nan.data.frame(pak1_phospho)] <- NA
+
+
+table(duplicated(pak1_phospho$gene_site))
+# sum up duplicated sites:
+duplicated_sites = unique(pak1_phospho$gene_site[duplicated(pak1_phospho$gene_site)])
+length(duplicated_sites)
+
+
+replace_duplicates_with_sum = function(data){
+  for (i in 1:length(duplicated_sites)){
+    data[data$gene_site == duplicated_sites[i],1:19] <- rep(apply(data[data$gene_site == duplicated_sites[i],1:19],2,sum,na.rm=T), each = nrow(data[data$gene_site == duplicated_sites[i],]))
+    
+  }
+  return(data)
+}
+
+pak1_phospho_duplicated_summed = pak1_phospho
+
+pak1_phospho_duplicated_summed = replace_duplicates_with_sum(pak1_phospho_duplicated_summed)
+
+nrow(pak1_phospho_duplicated_summed)
+
+pak1_phospho_duplicated_summed=pak1_phospho_duplicated_summed[!duplicated(pak1_phospho_duplicated_summed$gene_site),]
+nrow(pak1_phospho_duplicated_summed)
+#22,064 out of 25,233
+
+pak1_phospho_duplicated_summed[pak1_phospho_duplicated_summed==0]<-NA
+
+
+
+# QC:
+par(mar=c(10,5,5,5))
+barplot(apply(pak1_phospho_duplicated_summed[,1:19], 2, function(x) sum(!is.na(x))), las = 2)
+
+boxplot(log2(pak1_phospho_duplicated_summed[,1:19]), las = 2)
+
+
+# remove MCF7 standard
+pak1_phospho_duplicated_summed = pak1_phospho_duplicated_summed[,-7]
+
+# normalize
+library(limma)
+pak1_phospho_duplicated_summed_norm = pak1_phospho_duplicated_summed[,1:18]
+rownames(pak1_phospho_duplicated_summed_norm) = pak1_phospho_duplicated_summed$gene_site
+
+pak1_phospho_duplicated_summed_norm = limma::normalizeVSN((pak1_phospho_duplicated_summed_norm))
+
+boxplot(pak1_phospho_duplicated_summed_norm, las = 2)
+
+library(pheatmap)
+column_annotation = data.frame(cell_line = rep(c("LTED", "TAMR", "WT"), each = 6), treatment = rep(c("DMSO", "inh", "DMSO", "inh", "DMSO", "inh"), c(3,3,3,3,3,3)), replicate = rep(1:3, 6))
+rownames(column_annotation) = colnames(pak1_phospho_duplicated_summed_norm)
+
+pheatmap(na.omit(pak1_phospho_duplicated_summed_norm), scale = "row", annotation_col = column_annotation, color = colorRampPalette(c("#5390c1", "white", "#ea513f"))(100), breaks = seq(-3,3,6/100))
+
+write.csv(pak1_phospho_duplicated_summed_norm, file = "K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/Pak1_inh_PHOSPHO_duplSummed_VSNnorm.csv")
+
+########################################################################################
+# START HERE WITH NORMALIZED, FILTERED, DUPLICATES SUMMED DATA
+##########################################################################################
+#
+#
+#
+
+
+
+norm.mat_duplicated_summed = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/Pak1_inh_PHOSPHO_duplSummed_VSNnorm.csv", header = T, stringsAsFactors = F, row.names = 1)
+#
+
+
+#metadata:
+cell_line = sapply(strsplit(colnames(norm.mat_duplicated_summed), split = "_", fixed = T), function(x) x[1])
+treatment =  sapply(strsplit(colnames(norm.mat_duplicated_summed), split = "_", fixed = T), function(x) x[2])
+
+my_sample_col <- data.frame(cell_line =cell_line, treatment = treatment)
+row.names(my_sample_col) <- colnames(norm.mat_duplicated_summed)
+
+
+# continue with setting the design matrix and perform DE analysis with limma R package
+# create a vector that contains the different conditions of your experiment (in the order that they appear in your data --> best use the colnames (minus replicates))
+
+cond_vec = as.factor(paste0(cell_line, "_",treatment))
+table(cond_vec)
+# Then we continue with first step of the construction of the OMNIPATH network
+
+# import KSN from omnipath
+omnipath_ptm <- get_signed_ptms()
+
+# likely erroneous database records: As all databases, the resources constituting OmniPath contain wrong records, some of them more, others less. Here we see all these records are from only one resource called ProtMapper. ProtMapper uses literature mining algorithms (REACH, Sparser), which are known to produce a number of false positives in their output. On this premise:
+
+omnipath_ptm <- omnipath_ptm %>% filter(!grepl('ProtMapper', sources) | n_resources > 1)
+
+# Which means: not from ProtMapper, or from more than one resource (i.e. if it is from ProtMapper, but also another resource confirms, then we keep the record).
+
+omnipath_ptm <- omnipath_ptm[omnipath_ptm$modification %in% c("dephosphorylation","phosphorylation"),]
+KSN <- omnipath_ptm[,c(4,3)]
+KSN$substrate_genesymbol <- paste(KSN$substrate_genesymbol,omnipath_ptm$residue_type, sep ="_")
+KSN$substrate_genesymbol <- paste(KSN$substrate_genesymbol,omnipath_ptm$residue_offset, sep = "")
+KSN$mor <- ifelse(omnipath_ptm$modification == "phosphorylation", 1, -1)
+KSN$likelihood <- 1
+
+#we remove ambiguous modes of regulations
+KSN$id <- paste(KSN$substrate_genesymbol,KSN$enzyme_genesymbol,sep ="")
+KSN <- KSN[!duplicated(KSN$id),]
+KSN <- KSN[,-5]
+
+#rename KSN to fit decoupler format for downstream analysis
+names(KSN)[c(1,2)] <- c("phospho_site","kinase")
+
+# Implement a specific plotting function:
+# https://github.com/saezlab/kinase_tf_mini_tuto/blob/main/code/utils.R
+ 
+plot_top_features <- function(data, n_top) {
+
+  colnames(data) <- "value"
+
+  arranged <- data %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column(var = "id") %>%
+    arrange(desc(value))
+
+  top_up <- slice_head(arranged, n = n_top)
+  top_down <- slice_tail(arranged, n = n_top)
+
+  p <- bind_rows(list(up = top_up, down = top_down), .id = "status") %>%
+    mutate(id = fct_inorder(id)) %>%
+    ggplot(aes(x = value, y = id, fill = status)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = c("up" = "red4", "down" = "mediumblue")) +
+    theme_bw()
+
+  return(p)
+
+}
+
+#design <- model.matrix(~0 + cond_vec) #unpaired design for responderDMSO vs. nonresponder DMSO comparison
+
+design <- model.matrix(~0 + cond_vec)
+colnames(design) <- gsub("cond_vec", "", colnames(design))
+
+colnames(design)
+
+
+phospho.mat = norm.mat_duplicated_summed
+nrow(design)
+ncol(phospho.mat)
+head(phospho.mat)
+
+######################################################################
+######################################################################
+
+library(limma)
+#filter for at least 3/4 values per condition:
+condition1 = "WT_inh"
+condition2 = "WT_DMSO"
+
+condition1_columns = (1:ncol(phospho.mat))[cond_vec == condition1]
+colnames(phospho.mat)[condition1_columns]
+condition2_columns = (1:ncol(phospho.mat))[cond_vec == condition2]
+colnames(phospho.mat)[condition2_columns]
+
+# only include sites with 3/3 values
+phospho.mat.condition = phospho.mat[apply(phospho.mat[,condition1_columns], 1, function(x) sum(!is.na(x))) > 2 & apply(phospho.mat[,condition2_columns], 1, function(x) sum(!is.na(x))) > 2,]
+nrow(phospho.mat)
+nrow(phospho.mat.condition)
+
+head(phospho.mat.condition)
+
+fit <- lmFit(phospho.mat.condition,design)
+
+#change the comparison that you want 
+##!!! rename
+
+
+contrast_name <- paste0(condition1, '-', condition2)
+contrast_name
+
+cm <- limma::makeContrasts(contrasts=eval(contrast_name),
+                                        levels=design)
+
+
+fit2 <- contrasts.fit(fit, cm)
+
+fit3 <- eBayes(fit2, trend=T,robust = T)
+
+#
+comp1_stat <- limma::topTable(fit3, coef=1, number=nrow(fit3), adjust.method="fdr", sort.by="none") 
+
+
+
+
+
+# the comp1_stat data frame needs to consist of a single column containing the T-stats
+# the rownames have to be gene_phosphosite (e.g. AKT1_S473)
+head(comp1_stat)
+
+# this we will use downstream for pathway activity
+comp1_stat_downstream <- limma::topTable(fit3, coef=1, number=nrow(fit3), adjust.method="fdr", sort.by="none") %>% 
+  dplyr::select(t) %>% 
+  dplyr::rename(!!contrast_name :=t) %>% 
+  drop_na() %>%
+  rownames_to_column() %>% 
+  separate("rowname", sep="_", into=c("GeneSymbol","PhosID"))
+
+head(comp1_stat_downstream)
+# matrix should contain GeneSymbol, PhosID and Stats
+
+setwd("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/")
+write.csv(comp1_stat, file = paste0("20240827_PHOSPHO_",contrast_name,"_stats.csv"), row.names = T)
+
+comp1_stat = read.csv("20240827_PHOSPHO_LTED_inh-LTED_DMSO_stats.csv", row.names = 1)
+
+# refine the network to include kinases with at least 5 targets
+KSN_exp_1 <- intersect_regulons(as.matrix(comp1_stat), KSN, .source = kinase, .target = phospho_site, minsize=5) 
+
+
+kin_activity_1 <- run_wmean(mat = as.matrix(comp1_stat), .source = "kinase", .target = "phospho_site",network = KSN_exp_1, times = 1000)
+
+#format the DF for visualization purposes
+kin_activity_1 <- kin_activity_1[kin_activity_1$statistic == "norm_wmean",c(2,4)] %>% column_to_rownames(var="source")
+
+# also save the total output to investigate in more detail
+kin.activity.output <- kin_activity_1 %>% rownames_to_column(var="Omnipath_Kinase")
+head(kin.activity.output)
+
+write_tsv(kin.activity.output,file=paste0("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_kinase_activities_",contrast_name,".tsv"))
+
+
+
+# Separate EDA plots wih the top10 UO/DOWN MOST PERTURBED KINASES FOR THE 3 COMPARISONS
+plot_top_features(kin_activity_1, n_top = 20) +
+  ggtitle(contrast_name)
+
+
+
+
+
+# merge results:
+WT_kinases = read.delim("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_kinase_activities_WT_inh-WT_DMSO.tsv")
+LTED_kinases = read.delim("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_kinase_activities_LTED_inh-LTED_DMSO.tsv")
+TAMR_kinases = read.delim("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_kinase_activities_TAMR_inh-TAMR_DMSO.tsv")
+
+kinases_merged = merge(WT_kinases, LTED_kinases, by = "Omnipath_Kinase", all = T)
+kinases_merged = merge(kinases_merged, TAMR_kinases, by = "Omnipath_Kinase", all = T)
+colnames(kinases_merged)[2:4] = c("WT", "LTED", "TAMR")
+rownames(kinases_merged) = kinases_merged$Omnipath_Kinase
+kinases_merged = kinases_merged[,-1]
+
+pheatmap(kinases_merged, scale = "none", cluster_rows = F, cluster_cols = F, color = colorRampPalette(c("#5390c1", "white", "#ea513f"))(100), breaks = seq(-2,2,4/100))
+
+plot(kinases_merged$LTED, kinases_merged$TAMR, pch = 16, col = "#00000080", xlab = "LTED PAK1-inh vs. DMSO", ylab = "TAMR PAK1-inh vs. DMSO", main = "kinase activity changes upon PAK1-inhibition", cex = 1)
+abline(h=2, lty = 2, col = "#ea513f")
+abline(v=2, lty = 2, col = "#ea513f")
+abline(h=-2, lty = 2, col = "#5390c1")
+abline(v=-2, lty = 2, col = "#5390c1")
+
+library(wordcloud)
+kinases_merged = kinases_merged[!is.na(kinases_merged$LTED) & !is.na(kinases_merged$TAMR),]
+text_to_plot = na.omit(rownames(kinases_merged)[abs(kinases_merged$LTED) > 2 | abs(kinases_merged$TAMR) > 2])
+x_coord = na.omit(kinases_merged$LTED[abs(kinases_merged$LTED) > 2 | abs(kinases_merged$TAMR) > 2])
+y_coord = na.omit(kinases_merged$TAMR[abs(kinases_merged$LTED) > 2 | abs(kinases_merged$TAMR) > 2])
+
+textplot(x_coord, y_coord, text_to_plot, new = F, show.lines = T)
+
+
+# plot intensity of PAK1 target sites
+PAK1_targets = KSN$phospho_site[KSN$kinase == "PAK1"]
+PAK1_targets_identified = PAK1_targets[PAK1_targets %in% rownames(phospho.mat)]
+#39
+pheatmap(na.omit(phospho.mat[PAK1_targets_identified,]), scale = "row", cluster_rows = T, cluster_cols = F, color = colorRampPalette(c("#5390c1", "white", "#ea513f"))(100), breaks = seq(-2,2,4/100))
+
+# stats:
+
+WT_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_PHOSPHO_WT_inh-WT_DMSO_stats.csv", header = T, stringsAsFactors = F, row.names = 1)
+
+LTED_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_PHOSPHO_LTED_inh-LTED_DMSO_stats.csv", header = T, stringsAsFactors = F, row.names = 1)
+TAMR_stats = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/20240827_PHOSPHO_TAMR_inh-TAMR_DMSO_stats.csv", header = T, stringsAsFactors = F, row.names = 1)
+
+
+# VOLCANO
+# #########################################
+plot(TAMR_stats$logFC, -log10(TAMR_stats$adj.P.Val), pch = 16, col = "#00000050", xlim = c(-4,4))
+#add known target sites:
+points(pak1.stats.merged$TAMR_logFC, -log10(pak1.stats.merged$TAMR_adj.P.Val),pch=16, col = "red")
+#add predicted target sites:
+points(TAMR_stats$logFC[rownames(TAMR_stats) %in% paste0(nature_pak1_sites$Gene, "_", nature_pak1_sites$Phosphosite)], -log10(TAMR_stats$adj.P.Val)[rownames(TAMR_stats) %in% paste0(nature_pak1_sites$Gene, "_", nature_pak1_sites$Phosphosite)],pch=16, col = "blue")
+
+textplot(data.matrix(TAMR_stats$logFC)[abs(TAMR_stats$logFC) > 2 | TAMR_stats$adj.P.Val < 0.01], data.matrix(-log10(TAMR_stats$adj.P.Val))[abs(TAMR_stats$logFC) > 2 | TAMR_stats$adj.P.Val < 0.01], rownames(TAMR_stats)[abs(TAMR_stats$logFC) > 2 | TAMR_stats$adj.P.Val < 0.01], new = F)
+
+
+# potential new PAK1 target sites:
+# nature paper about target landscape of Ser/Thr kinases
+setwd("K:/Ergebnisse/LS_testing/1_PhD/paper/EGF_dynamics/additional_plots/kinase_assignment/")
+nature_paper_result = read.csv("nature_paper_result.csv", header = T, stringsAsFactors = F, sep = ",")
+
+nature_pak1_sites = nature_paper_result[nature_paper_result$PAK1_percentile>98 & nature_paper_result$PAK1_rank <6,]
+# 288 potential pak1 target sites
+nature_pak1_sites$gene_site = paste0(nature_pak1_sites$Gene, "_", nature_pak1_sites$Phosphosite)
+
+nature_pak1_identified = nature_pak1_sites$gene_site[nature_pak1_sites$gene_site %in% rownames(phospho.mat)]
+######################
+PAK1_targets_identified = union(PAK1_targets_identified, nature_pak1_identified)
+
+WT_stats.pak1 = na.omit(WT_stats[PAK1_targets_identified,])
+barplot(WT_stats.pak1$logFC[order(WT_stats.pak1$logFC, decreasing = T)], las = 2, names.arg = rownames(WT_stats.pak1)[order(WT_stats.pak1$logFC, decreasing = T)])
+
+LTED_stats.pak1 = na.omit(LTED_stats[PAK1_targets_identified,])
+
+barplot(LTED_stats.pak1$logFC[order(LTED_stats.pak1$logFC, decreasing = T)], las = 2, names.arg = rownames(LTED_stats.pak1)[order(LTED_stats.pak1$logFC, decreasing = T)], main = "LTED: T-stats of PAK1 target sites upon PAK1-inhibition")
+
+
+TAMR_stats.pak1 = na.omit(TAMR_stats[PAK1_targets_identified,])
+barplot(TAMR_stats.pak1$logFC[order(TAMR_stats.pak1$logFC, decreasing = T)], las = 2, names.arg = rownames(TAMR_stats.pak1)[order(TAMR_stats.pak1$logFC, decreasing = T)], main = "TAMR: T-stats of PAK1 target sites upon PAK1-inhibition")
+
+
+pak1.stats.merged = merge(WT_stats.pak1, LTED_stats.pak1, by = 0, all = T)
+rownames(pak1.stats.merged) = pak1.stats.merged$Row.names
+pak1.stats.merged = pak1.stats.merged[,-1]
+pak1.stats.merged = merge(pak1.stats.merged, TAMR_stats.pak1, by = 0, all = T)
+rownames(pak1.stats.merged) = pak1.stats.merged$Row.names
+pak1.stats.merged = pak1.stats.merged[,-1]
+
+colnames(pak1.stats.merged) = paste0(rep(c("WT", "LTED", "TAMR"), each = 6),"_",colnames(pak1.stats.merged))
+pak1.stats.merged$gen = sapply(strsplit(rownames(pak1.stats.merged), "_"), function(x) x[1])
+
+table(pak1.stats.merged$gen)
+
+par(mar=c(10,5,5,5))
+barplot(t(data.matrix(pak1.stats.merged[,c(7,13)])), beside = T, las = 2, legend.text = T)
+barplot(t(data.matrix(-log10(pak1.stats.merged[,c(10,16)]))), beside = T, las = 2, legend.text = T)
+
+
+# scatter plot:
+phospho.mat = read.csv("K:/Ergebnisse/LS_testing/1_PhD/01_experiments/Exp61_MCF7_LTED_TAMR_WT_PAK1-inh_treatment_phosphoMS/Pak1_inh_PHOSPHO_duplSummed_VSNnorm.csv", row.names = 1)
+
+phospho.mat.pak1 = phospho.mat[rownames(phospho.mat) %in% PAK1_targets_identified,]
+phospho.mat.pak1$source = rep("omnipath", nrow(phospho.mat.pak1))
+phospho.mat.pak1$source[rownames(phospho.mat.pak1) %in% nature_pak1_identified] <- "predicted"
+
+colnames(phospho.mat.pak1)
+
+phospho.mat.pak1$LTED_FC = apply(phospho.mat.pak1[,1:6], 1, function(x) mean(x[4:6]-x[1:3], na.rm=T))
+
+phospho.mat.pak1$LTED_sd = apply(phospho.mat.pak1[,1:6], 1, function(x) sd(x[4:6]-x[1:3], na.rm=T))
+
+phospho.mat.pak1$TAMR_FC = apply(phospho.mat.pak1[,7:12], 1, function(x) mean(x[4:6]-x[1:3], na.rm=T))
+
+phospho.mat.pak1$TAMR_sd = apply(phospho.mat.pak1[,7:12], 1, function(x) sd(x[4:6]-x[1:3], na.rm=T))
+
+phospho.mat.pak1= phospho.mat.pak1[!is.na(phospho.mat.pak1$LTED_FC) & !is.na(phospho.mat.pak1$TAMR_FC),]
+
+phospho.mat.pak1$LTED_p = rep(NA, nrow(phospho.mat.pak1))
+phospho.mat.pak1$TAMR_p = rep(NA, nrow(phospho.mat.pak1))
+
+phospho.mat.pak1$LTED_p[apply(phospho.mat.pak1[,1:6],1,function(x) sum(!is.na(x))) == 6] = apply(phospho.mat.pak1[apply(phospho.mat.pak1[,1:6],1,function(x) sum(!is.na(x))) == 6,1:6], 1, function(x) t.test(x[1:3],x[4:6])$p.value)
+
+
+phospho.mat.pak1$TAMR_p[apply(phospho.mat.pak1[,7:12],1,function(x) sum(!is.na(x))) == 6] = apply(phospho.mat.pak1[apply(phospho.mat.pak1[,7:12],1,function(x) sum(!is.na(x))) == 6,1:6], 1, function(x) t.test(x[1:3],x[4:6])$p.value)
+
+
+plot(data.matrix(phospho.mat.pak1$LTED_FC), data.matrix(phospho.mat.pak1$TAMR_FC), pch = 16, xlab = "log2 FC PAK1-inh vs DMSO (LTED)", ylab = "log2 FC PAK1-inh vs DMSO (TAMR)",
+     main = "changes in PAK1 substrates phosphorylation", xlim = c(-2,2), ylim = c(-2,2), col = as.factor(phospho.mat.pak1$source))
+
+abline(h=0, lty = 2)
+abline(v=0, lty = 2)
+library(wordcloud)
+
+
+
+interesting.lted = phospho.mat.pak1[abs(phospho.mat.pak1$LTED_FC) > 1 |abs(phospho.mat.pak1$TAMR_FC) > 1 ,]
+interesting.lted = interesting.lted[!is.na(interesting.lted$LTED_FC),]
+
+textplot(interesting.lted$LTED_FC, interesting.lted$TAMR_FC, rownames(interesting.lted),new = F, show.lines = T)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FC_colors = data.frame(color = colorRampPalette(c("#5390c1", "white", "#ea513f"))(100),FC = seq(-2,2,4/99))
+border_color = rep("lightgrey", nrow(TAMR_stats.pak1))
+border_color[TAMR_stats.pak1$adj.P.Val < 0.05] <- "red"
+
+
+par(mar=c(10,5,5,5))
+barplot(TAMR_stats.pak1$logFC[order(TAMR_stats.pak1$logFC, decreasing = T)], las = 2, names.arg = rownames(TAMR_stats.pak1)[order(TAMR_stats.pak1$logFC, decreasing = T)], main = "TAMR: T-stats of PAK1 target sites upon PAK1-inhibition", col = FC_colors$color[sapply(TAMR_stats.pak1$logFC[order(TAMR_stats.pak1$logFC, decreasing = T)], function(x) sum(x > FC_colors$FC))], border = border_color[order(TAMR_stats.pak1$logFC, decreasing = T)])
+
+
+# LTED:
+FC_colors = data.frame(color = colorRampPalette(c("#5390c1", "white", "#ea513f"))(100),FC = seq(-2,2,4/99))
+border_color = rep("lightgrey", nrow(LTED_stats.pak1))
+border_color[LTED_stats.pak1$adj.P.Val < 0.05] <- "red"
+
+
+par(mar=c(10,5,5,5))
+barplot(LTED_stats.pak1$logFC[order(LTED_stats.pak1$logFC, decreasing = T)], las = 2, names.arg = rownames(LTED_stats.pak1)[order(LTED_stats.pak1$logFC, decreasing = T)], main = "LTED: T-stats of PAK1 target sites upon PAK1-inhibition", col = FC_colors$color[sapply(LTED_stats.pak1$logFC[order(LTED_stats.pak1$logFC, decreasing = T)], function(x) sum(x > FC_colors$FC))], border = border_color[order(LTED_stats.pak1$logFC, decreasing = T)])
+
+
+
+pak1_merged = merge(LTED_stats.pak1, TAMR_stats.pak1, by = 0, all = T)
+rownames(pak1_merged) = pak1_merged$Row.names
+colnames(pak1_merged)[2:7] = paste0("LTED_", colnames(pak1_merged)[2:7])
+colnames(pak1_merged)[8:13] = paste0("TAMR_", colnames(pak1_merged)[8:13])
+
+pheatmap(pak1_merged[,c(2,8)], scale = "none", cluster_rows = F, cluster_cols = F, color = colorRampPalette(c("#5390c1", "white", "#ea513f"))(100), breaks = seq(-2,2,4/100))
+```
+
+
+```{r}
+plot(pak1_merged$LTED_logFC.x, pak1_merged$TAMR_logFC.y, pch = 16, col = "#00000080", xlab = "LTED PAK1-inh vs. DMSO", ylab = "TAMR PAK1-inh vs. DMSO", main = "log2FC of PAK1 target sites", cex = 1)
+abline(h=0, lty = 2)
+abline(v=0, lty = 2)
+
+
+library(wordcloud)
+
+text_to_plot =rownames(pak1_merged)[!is.na(pak1_merged$LTED_logFC.x) & !is.na(pak1_merged$TAMR_logFC.y)]
+x_coord = pak1_merged$LTED_logFC.x[!is.na(pak1_merged$LTED_logFC.x) & !is.na(pak1_merged$TAMR_logFC.y) ]
+y_coord = pak1_merged$TAMR_logFC.y[!is.na(pak1_merged$LTED_logFC.x) & !is.na(pak1_merged$TAMR_logFC.y) ]
+
+textplot(x_coord, y_coord, text_to_plot, new = F, show.lines = T)
+
+points(pak1_merged$LTED_logFC.x, pak1_merged$TAMR_logFC.y, pch = 16, col = "#876cad", cex =abs(pak1_merged$LTED_t.x)/3)
+points(pak1_merged$LTED_logFC.x, pak1_merged$TAMR_logFC.y, pch = 16, col = "#d76d17", cex =abs(pak1_merged$TAMR_t.y)/3)
+
+legend("topright", bty = "n", pch = 16, cex = c(1/2, 5/2, 10/2), col = "#876cad", legend = c("1", "5", "10"))
+
